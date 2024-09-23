@@ -1,40 +1,35 @@
-// controllers/authController.js
-
 const bcrypt = require('bcryptjs');
-const User = require('../models/User');
-const crypto = require('crypto'); // Import the crypto module
-const sendVerificationEmail = require('../services/emailService');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const sendVerificationEmail = require('../services/emailService');
+
+const generateToken = (id, secret, expiresIn) => {
+    return jwt.sign({ id }, secret, { expiresIn });
+};
 
 const registerUser = async (req, res) => {
     const { username, email, password } = req.body;
     try {
-        // Check if user with the same email exists
-        let user = await User.findOne({ email });
+        const user = await User.findOne({ email });
         if (user) {
             return res.status(400).json({ msg: 'Email already exists' });
         }
 
-        // Create a new user instance
-        user = new User({
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+
+        const verificationToken = crypto.randomBytes(20).toString('hex');
+        const newUser = new User({
             username,
             email,
-            password
+            password: hashedPassword,
+            verificationToken,
+            verificationTokenExpiry: Date.now() + 3600000 // Token expires in 1 hour
         });
-
-        // Hash the password before saving to database
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(password, salt);
-
-        // Generate a verification token
-        const token = crypto.randomBytes(20).toString('hex');
-        user.verificationToken = token;
-
-        // Save user to database
-        await user.save();
-
-        // Send verification email
-        await sendVerificationEmail(user.email, user.verificationToken);
+        // verificationTokenExpiry: Date.now() + 15000 
+        await newUser.save();
+        await sendVerificationEmail(newUser.email, newUser.verificationToken);
 
         res.status(201).json({ msg: 'User registered. Check your email for verification instructions.' });
     } catch (err) {
@@ -47,16 +42,19 @@ const verifyEmail = async (req, res) => {
     const { token } = req.query;
 
     try {
-        // Find user by verification token
-        const user = await User.findOne({ verificationToken: token });
+        const user = await User.findOne({ 
+            verificationToken: token,
+            verificationTokenExpiry: { $gt: Date.now() } // Check token expiry
+        });
 
         if (!user) {
+            await User.deleteOne({ verificationToken: token });
             return res.status(400).json({ msg: 'Invalid or expired token. Please try again.' });
         }
 
-        // Update user's verification status
         user.is_verified = true;
         user.verificationToken = undefined;
+        user.verificationTokenExpiry = undefined;
         await user.save();
 
         res.status(200).json({ msg: 'Email verified successfully. You can now log in.' });
@@ -69,103 +67,57 @@ const verifyEmail = async (req, res) => {
 const loginUser = async (req, res) => {
     const { email, password } = req.body;
     try {
-        console.log(`Login attempt for email: ${email}`);
-
-        // Check if user exists
         const user = await User.findOne({ email });
-        if (!user) {
-            console.log(`User with email ${email} not found`);
-            return res.status(400).json({ msg: 'Invalid credentials' });
+        if (!user || !user.is_verified) {
+            return res.status(400).json({ msg: 'Invalid credentials or unverified email' });
         }
 
-        console.log(`User with email ${email} found`);
-
-        // Check if user is verified
-        if (!user.is_verified) {
-            console.log(`User with email ${email} is not verified`);
-            return res.status(400).json({ msg: 'Please verify your email first' });
-        }
-
-        // Compare password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            console.log(`Incorrect password for email: ${email}`);
             return res.status(400).json({ msg: 'Invalid credentials' });
         }
 
-        console.log(`User with email ${email} logged in successfully`);
+        const accessToken = "Bearer " + generateToken(user.id, process.env.JWT_SECRET, '15m');
+        const refreshToken = "Bearer " + generateToken(user.id, process.env.JWT_REFRESH_SECRET, '7d');
 
-        // Generate JWT
-        const payload = {
-            user: {
-                id: user.id
-            }
-        };
+        // Optionally store the refresh token in the database or a Redis store
+        user.refreshToken = refreshToken;
+        await user.save();
 
-        jwt.sign(
-            payload,
-            process.env.JWT_SECRET,
-            { expiresIn: '1h' },
-            (err, token) => {
-                if (err) {
-                    console.error(`Error generating JWT for email: ${email}`, err);
-                    throw err;
-                }
-                console.log(`JWT generated successfully for email: ${email}`);
-                res.json({ token });
-            }
-        );
+        res.json({ accessToken, refreshToken });
     } catch (err) {
-        console.error(`Error logging in user with email: ${email}`, err);
+        console.error(err.message);
         res.status(500).send('Server Error');
     }
 };
 
+const refreshAccessToken = async (req, res) => {
+    const { refreshToken } = req.body;
 
-// const loginUser = async (req, res) => {
-//     const { email, password } = req.body;
-//     try {
-//         // Check if user exists
-//         const user = await User.findOne({ email });
-//         if (!user) {
-//             return res.status(400).json({ msg: 'Invalid credentials' });
-//         }
+    try {
+        if (!refreshToken) {
+            return res.status(401).json({ msg: 'No refresh token provided' });
+        }
 
-//         // Check if user is verified
-//         if (!user.is_verified) {
-//             return res.status(400).json({ msg: 'Please verify your email first' });
-//         }
+        const token = refreshToken.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+        const user = await User.findById(decoded.id);
 
-//         // Compare password
-//         const isMatch = await bcrypt.compare(password, user.password);
-//         if (!isMatch) {
-//             return res.status(400).json({ msg: 'Invalid credentials' });
-//         }
+        if (!user || user.refreshToken !== refreshToken) {
+            return res.status(403).json({ msg: 'Invalid refresh token' }); 
+        }
 
-//         // Generate JWT
-//         const payload = {
-//             user: {
-//                 id: user.id
-//             }
-//         };
-
-//         jwt.sign(
-//             payload,
-//             process.env.JWT_SECRET, // Use JWT_SECRET from environment variables
-//             { expiresIn: '1h' }, // Token expires in 1 hour
-//             (err, token) => {
-//                 if (err) throw err;
-//                 res.json({ token });
-//             }
-//         );
-//     } catch (err) {
-//         console.error(err.message);
-//         res.status(500).send('Server Error');
-//     }
-// };
+        const newAccessToken = "Bearer " + generateToken(user.id, process.env.JWT_SECRET, '15m');
+        res.json({ accessToken: newAccessToken });
+    } catch (err) {
+        console.error('Refresh token error:', err);
+        res.status(403).json({ msg: 'Invalid refresh token' });
+    }
+};
 
 module.exports = {
     registerUser,
     verifyEmail,
-    loginUser
-}
+    loginUser,
+    refreshAccessToken
+};
