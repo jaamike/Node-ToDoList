@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-// Schema for Subtask
-const subtaskSchema = new Schema({
+// Schema for Todo
+const todoSchema = new Schema({
     title: {
         type: String,
         required: true
@@ -14,18 +14,13 @@ const subtaskSchema = new Schema({
         default: 'Not Started'
     },
     dueDate: Date,
-    parent: {
-        type: Schema.Types.ObjectId,
-        ref: 'MainTask',  // Reference to the MainTask document this subtask belongs to
-        required: true
-    },
     user: {
         type: Schema.Types.ObjectId,
-        ref: 'User',  // Reference to the User document who owns this subtask
+        ref: 'User',  // Reference to the User document who owns this todo
         required: true
     }
 }, { timestamps: true });
 
-const Subtask = mongoose.model('Subtask', subtaskSchema);
+const Todo = mongoose.model('Todo', todoSchema);
 
-module.exports = Subtask;
+module.exports = Todo;

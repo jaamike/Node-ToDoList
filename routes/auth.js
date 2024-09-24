@@ -11,4 +11,6 @@ router.get('/verify-email', authController.verifyEmail);
 // POST /api/auth/register
 router.post('/login', authController.loginUser);
 
+router.post('/refresh', authController.refreshAccessToken);
+
 module.exports = router;

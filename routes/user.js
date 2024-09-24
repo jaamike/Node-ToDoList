@@ -6,6 +6,7 @@ const router = express.Router();
 // Route that requires authentication
 router.get('/profile', protect, async (req, res) => {
     try {
+        
         const user = req.user;
         if (!user) {
             return res.status(404).json({ msg: 'User not found' });

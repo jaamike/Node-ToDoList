@@ -84,7 +84,7 @@ const loginUser = async (req, res) => {
         user.refreshToken = refreshToken;
         await user.save();
 
-        res.json({ accessToken, refreshToken });
+        res.json({ accessToken, refreshToken, username: user.username });
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server Error');
@@ -92,6 +92,7 @@ const loginUser = async (req, res) => {
 };
 
 const refreshAccessToken = async (req, res) => {
+    
     const { refreshToken } = req.body;
 
     try {
@@ -101,6 +102,7 @@ const refreshAccessToken = async (req, res) => {
 
         const token = refreshToken.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+
         const user = await User.findById(decoded.id);
 
         if (!user || user.refreshToken !== refreshToken) {
